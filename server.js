@@ -8,58 +8,43 @@ const server = http.createServer((req, res) => {
 
     if (targetPath === '/' || targetPath === '/favicon.ico') {
         res.writeHead(200, { 'Content-Type': 'text/plain;charset=UTF-8' });
-        res.end('IPTV Rewrite Proxy is running!');
+        res.end('IPTV Stream Proxy is running!');
         return;
     }
 
+    // الرابط الأساسي الأول
     const initialTarget = `http://103.176.90.137${targetPath}`;
 
-    function makeProxyRequest(currentUrl, originalReq) {
+    function makeProxyRequest(currentUrl) {
         const client = currentUrl.startsWith('https') ? https : http;
 
         client.get(currentUrl, {
             headers: {
                 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
-                'Referer': 'http://103.176.90.137/'
+                'Referer': 'http://103.176.90.137/',
+                'Accept': '*/*'
             }
         }, (proxyRes) => {
+            // تتبع التحويل (Redirect) إذا حدث
             if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
                 let redirectUrl = proxyRes.headers.location;
                 if (redirectUrl.startsWith('/')) {
                     const parsedOriginal = new URL(currentUrl);
                     redirectUrl = `${parsedOriginal.protocol}//${parsedOriginal.host}${redirectUrl}`;
                 }
-                return makeProxyRequest(redirectUrl, originalReq);
+                return makeProxyRequest(redirectUrl);
             }
 
-            // تحديد النطاق الخاص بك على Render تلقائياً
-            const host = originalReq.headers['host'];
-            const protocol = 'https://'; // إجبار الـ https
+            // إرسال الرؤوس مع السماح بالوصول من أي مصدر (CORS)
+            res.writeHead(proxyRes.statusCode, {
+                ...proxyRes.headers,
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers': '*'
+            });
 
-            // التحقق مما إذا كان الرد عبارة عن ملف نصي/محتوى m3u8 لتعديل روابطه الداخلية
-            const contentType = proxyRes.headers['content-type'] || '';
-            if (contentType.includes('text') || contentType.includes('application') || currentUrl.includes('.m3u8')) {
-                let data = '';
-                proxyRes.on('data', chunk => { data += chunk; });
-                proxyRes.on('end', () => {
-                    // استبدال روابط السيرفرات الداخلية برابط البروكسي الخاص بك لتظل آمنة
-                    let modifiedData = data.replace(/http:\/\/([^\/]+)/g, `${protocol}${host}`);
-
-                    res.writeHead(proxyRes.statusCode, {
-                        ...proxyRes.headers,
-                        'Access-Control-Allow-Origin': '*',
-                        'Content-Length': Buffer.byteLength(modifiedData)
-                    });
-                    res.end(modifiedData);
-                });
-            } else {
-                // تيار الفيديو المباشر (TS or Media Stream) يُمرر مباشرة بدون تعديل
-                res.writeHead(proxyRes.statusCode, {
-                    ...proxyRes.headers,
-                    'Access-Control-Allow-Origin': '*'
-                });
-                proxyRes.pipe(res);
-            }
+            // تمرير تدفق الفيديو مباشرة وبدون انقطاع
+            proxyRes.pipe(res);
 
         }).on('error', (err) => {
             if (!res.headersSent) {
@@ -69,7 +54,12 @@ const server = http.createServer((req, res) => {
         });
     }
 
-    makeProxyRequest(initialTarget, req);
+    makeProxyRequest(initialTarget);
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
 
 const PORT = process.env.PORT || 3000;
