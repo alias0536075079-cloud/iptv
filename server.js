@@ -9,93 +9,43 @@ const server = http.createServer((req, res) => {
 
         if (targetPath === '/' || targetPath === '/favicon.ico') {
             res.writeHead(200, { 'Content-Type': 'text/plain;charset=UTF-8' });
-            res.end('IPTV Safe Proxy is running!');
+            res.end('IPTV Clean Proxy is running!');
             return;
         }
 
-        const initialTarget = `http://103.176.90.137${targetPath}`;
+        // استخدام السيرفر المباشر الفعّال
+        const initialTarget = `http://103.176.91.49${targetPath}`;
 
-        function makeProxyRequest(currentUrl, originalReq) {
-            const client = currentUrl.startsWith('https') ? https : http;
-
-            const proxyReq = client.get(currentUrl, {
-                headers: {
-                    'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
-                    'Referer': 'http://103.176.90.137/',
-                    'Accept': '*/*'
-                },
-                timeout: 10000 // مهلة 10 ثوانٍ لمنع تعليق السيرفر
-            }, (proxyRes) => {
-                // تتبع التحويل (Redirect)
-                if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-                    let redirectUrl = proxyRes.headers.location;
-                    if (redirectUrl.startsWith('/')) {
-                        try {
-                            const parsedOriginal = new URL(currentUrl);
-                            redirectUrl = `${parsedOriginal.protocol}//${parsedOriginal.host}${redirectUrl}`;
-                        } catch (e) {}
-                    }
-                    return makeProxyRequest(redirectUrl, originalReq);
-                }
-
-                const host = originalReq.headers['host'];
-                const protocol = 'https://';
-                const contentType = proxyRes.headers['content-type'] || '';
-                const isM3U8 = currentUrl.includes('.m3u8') || contentType.includes('mpegurl') || contentType.includes('text');
-
-                if (isM3U8) {
-                    let data = '';
-                    proxyRes.on('data', chunk => { data += chunk; });
-                    proxyRes.on('end', () => {
-                        try {
-                            // تعديل الروابط الداخلية لتمر عبر البروكسي الآمن
-                            let modifiedData = data.replace(/http:\/\/([^\/]+)(\/[^\s]+)?/g, (match, p1, p2) => {
-                                return `${protocol}${host}${p2 || ''}`;
-                            });
-
-                            res.writeHead(proxyRes.statusCode, {
-                                ...proxyRes.headers,
-                                'Access-Control-Allow-Origin': '*',
-                                'Content-Length': Buffer.byteLength(modifiedData)
-                            });
-                            res.end(modifiedData);
-                        } catch (err) {
-                            res.writeHead(500, { 'Content-Type': 'text/plain' });
-                            res.end('M3U8 Parse Error');
-                        }
-                    });
-                } else {
-                    // تمرير تدفق الفيديو المباشر (TS) بدون أي تعديل وبسلاسة
-                    res.writeHead(proxyRes.statusCode, {
-                        ...proxyRes.headers,
-                        'Access-Control-Allow-Origin': '*'
-                    });
-                    proxyRes.pipe(res);
-                }
+        const proxyReq = http.request(initialTarget, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'http://103.176.91.49/',
+                'Accept': '*/*'
+            }
+        }, (proxyRes) => {
+            res.writeHead(proxyRes.statusCode, {
+                ...proxyRes.headers,
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers': '*'
             });
 
-            proxyReq.on('error', (err) => {
-                if (!res.headersSent) {
-                    res.writeHead(502, { 'Content-Type': 'text/plain;charset=UTF-8' });
-                    res.end('Bad Gateway / Stream Unreachable');
-                }
-            });
+            proxyRes.pipe(res);
+        });
 
-            proxyReq.on('timeout', () => {
-                proxyReq.destroy();
-                if (!res.headersSent) {
-                    res.writeHead(504, { 'Content-Type': 'text/plain;charset=UTF-8' });
-                    res.end('Gateway Timeout');
-                }
-            });
-        }
+        proxyReq.on('error', (err) => {
+            if (!res.headersSent) {
+                res.writeHead(502, { 'Content-Type': 'text/plain;charset=UTF-8' });
+                res.end('Proxy Error: ' + err.message);
+            }
+        });
 
-        makeProxyRequest(initialTarget, req);
+        req.pipe(proxyReq);
 
     } catch (e) {
         if (!res.headersSent) {
             res.writeHead(500, { 'Content-Type': 'text/plain' });
-            res.end('Server Internal Error');
+            res.end('Internal Server Error');
         }
     }
 });
